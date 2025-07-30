@@ -751,7 +751,7 @@ Provide a clear, specific answer based only on the information above. If the inf
             client = OpenAI(api_key=self.openai_key)
             
             model_map = {
-                "GPT-4": "gpt-4",
+                "GPT-4.1": "gpt-4.1",
                 "GPT-4 Mini": "gpt-4o-mini"
             }
             
@@ -803,7 +803,7 @@ with st.sidebar:
     # Model selection
     model = st.selectbox(
         "🤖 AI Model",
-        ["Gemini 2.0 Flash", "GPT-4 Mini", "GPT-4"],
+        ["GPT-4.1", "Gemini 2.0 Flash", "GPT-4 Mini"],
         help="Gemini 2.0 Flash is recommended for cost/performance"
     )
     

@@ -3,3 +3,4 @@ python-docx
 openai
 requests
 pillow
+base64

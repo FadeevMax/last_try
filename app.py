@@ -32,6 +32,20 @@ if 'vector_db_ready' not in st.session_state:
     st.session_state.vector_db_ready = False
 if 'messages' not in st.session_state:
     st.session_state.messages = []
+# Try to load existing processed data on app start
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+
+if not st.session_state.data_loaded and not st.session_state.processing_complete:
+    with st.spinner("Loading existing data..."):
+        if check_processed_data_exists():
+            chunks = load_chunks_from_github()
+            if chunks:
+                st.session_state.chunks = chunks
+                st.session_state.processing_complete = True
+                st.session_state.vector_db_ready = True
+                st.session_state.data_loaded = True
+                st.success("✅ Loaded existing processed data!")
 
 # CSS
 st.markdown("""
@@ -66,6 +80,76 @@ st.markdown("""
 st.markdown('<h1 class="main-header">🚀 GTI SOP Assistant - Unified</h1>', unsafe_allow_html=True)
 st.markdown("*All-in-one: Document Processing + Vector DB + Chat Interface*")
 
+def save_chunks_to_github(chunks):
+    """Save processed chunks to GitHub as JSON"""
+    import json
+    
+    if not GITHUB_TOKEN:
+        return False
+    
+    try:
+        # Convert chunks to JSON-safe format
+        chunks_data = []
+        for chunk in chunks:
+            chunk_copy = chunk.copy()
+            # Remove image data, keep only references
+            if 'images' in chunk_copy:
+                chunk_copy['images'] = [
+                    {
+                        'filename': img['filename'],
+                        'url': img.get('url', ''),
+                        'label': img['label'],
+                        'number': img['number'],
+                        'position': img['position']
+                    }
+                    for img in chunk_copy['images']
+                ]
+            chunks_data.append(chunk_copy)
+        
+        # Save to GitHub
+        json_content = json.dumps(chunks_data, indent=2)
+        upload_to_github('processed_chunks.json', json_content.encode('utf-8'), folder='data')
+        return True
+    except Exception as e:
+        st.error(f"Error saving chunks: {e}")
+        return False
+
+def load_chunks_from_github():
+    """Load processed chunks from GitHub"""
+    import json
+    
+    if not GITHUB_TOKEN:
+        return None
+    
+    try:
+        # Download JSON from GitHub
+        json_data = get_from_github('processed_chunks.json', folder='data')
+        if json_data:
+            chunks = json.loads(json_data.decode('utf-8'))
+            return chunks
+        return None
+    except Exception as e:
+        st.error(f"Error loading chunks: {e}")
+        return None
+
+def check_processed_data_exists():
+    """Check if processed data exists on GitHub"""
+    import requests
+    
+    if not GITHUB_TOKEN:
+        return False
+    
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/data/processed_chunks.json"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        return response.status_code == 200
+    except:
+        return False
 # Enhanced document chunker with image extraction
 def enhanced_chunk_docx(file_content, chunk_size=800):
     """Enhanced DOCX chunker with complete content extraction"""
@@ -764,7 +848,7 @@ with st.sidebar:
         st.info("ℹ️ Upload document to enable search")
 
 # Main interface with tabs
-tab1, tab2, tab3 = st.tabs(["📄 Process Document", "🔍 Search & Chat", "📋 View Chunks"])
+tab2, tab1, tab3 = st.tabs(["🔍 Search & Chat", "📄 Process Document", "📋 View Chunks"])
 
 # Tab 1: Document Processing
 with tab1:
@@ -802,6 +886,11 @@ with tab1:
                             total_images = sum(len(c.get('images', [])) for c in chunks)
                             
                             st.success(f"✅ Document processed successfully! Created {len(chunks)} chunks.")
+                            with st.spinner("Saving processed data to GitHub..."):
+                                if save_chunks_to_github(chunks):
+                                    st.success("✅ Data saved to GitHub for future use!")
+                                else:
+                                    st.warning("⚠️ Could not save data to GitHub")
                             st.info(f"📸 {chunks_with_images} chunks contain {total_images} total images")
                             
                             # Show preview
@@ -820,7 +909,21 @@ with tab1:
 # Tab 2: Search and Chat
 with tab2:
     st.markdown('<div class="step-header">Step 2: Search and Chat</div>', unsafe_allow_html=True)
-    
+    if not st.session_state.processing_complete:
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 Reload Data"):
+            with st.spinner("Loading data from GitHub..."):
+                if check_processed_data_exists():
+                    chunks = load_chunks_from_github()
+                    if chunks:
+                        st.session_state.chunks = chunks
+                        st.session_state.processing_complete = True
+                        st.session_state.vector_db_ready = True
+                        st.success("✅ Data loaded successfully!")
+                        st.rerun()
+                else:
+                    st.error("No processed data found. Please process a document first.")
     if not st.session_state.processing_complete:
         st.markdown('<div class="status-box warning">⚠️ Please process a document first in the "Process Document" tab.</div>', unsafe_allow_html=True)
     else:

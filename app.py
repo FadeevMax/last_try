@@ -35,8 +35,8 @@ def upload_to_github(filename, content, folder="images"):
     
     # Check if file exists
     headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
+    "Authorization": f"Bearer {GITHUB_TOKEN}",  # Change from "token" to "Bearer"
+    "Accept": "application/vnd.github.v3+json"
     }
     
     # Get current file SHA if exists (for update)
@@ -1068,14 +1068,17 @@ with tab2:
                                 img_data = top_images[0]
                                 img = img_data['img']
                                 try:
-                                    from PIL import Image
-                                    image_data = get_from_github(img['filename'])
-                                    if image_data:
-                                        import io
-                                        from PIL import Image
-                                        image = Image.open(io.BytesIO(image_data))
-                                        st.image(image, caption=img['label'], use_container_width=True)
-                                        st.image(image, caption=img['label'], use_container_width=True)
+                                    if img.get('url'):
+                                        # Use URL directly if available
+                                        st.image(img['url'], caption=img['label'], use_container_width=True)
+                                    else:
+                                        # Fallback to downloading
+                                        image_data = get_from_github(img['filename'])
+                                        if image_data:
+                                            import io
+                                            from PIL import Image
+                                            image = Image.open(io.BytesIO(image_data))
+                                            st.image(image, caption=img['label'], use_container_width=True)
                                 except Exception as e:
                                     st.error(f"Cannot display {img['filename']}: {e}")
                             else:
@@ -1085,14 +1088,17 @@ with tab2:
                                     img = img_data['img']
                                     with cols[idx]:
                                         try:
-                                            from PIL import Image
-                                            image_data = get_from_github(img['filename'])
-                                            if image_data:
-                                                import io
-                                                from PIL import Image
-                                                image = Image.open(io.BytesIO(image_data))
-                                                st.image(image, caption=img['label'], use_container_width=True)
-                                                st.image(image, caption=img['label'], use_container_width=True)
+                                            if img.get('url'):
+                                                # Use URL directly if available
+                                                st.image(img['url'], caption=img['label'], use_container_width=True)
+                                            else:
+                                                # Fallback to downloading
+                                                image_data = get_from_github(img['filename'])
+                                                if image_data:
+                                                    import io
+                                                    from PIL import Image
+                                                    image = Image.open(io.BytesIO(image_data))
+                                                    st.image(image, caption=img['label'], use_container_width=True)
                                         except Exception as e:
                                             st.error(f"Cannot display {img['filename']}: {e}")
                         elif total_images > 0:

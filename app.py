@@ -15,7 +15,71 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+GITHUB_REPO = os.getenv('GITHUB_REPO', 'FadeevMax/last_try')
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '')
+GITHUB_BRANCH = 'image-storage'  # Separate branch for images
 
+def upload_to_github(filename, content, folder="images"):
+    """Upload file to GitHub"""
+    import base64
+    import requests
+    
+    if not GITHUB_TOKEN:
+        return None
+        
+    # Encode content to base64
+    content_base64 = base64.b64encode(content).decode('utf-8')
+    
+    # GitHub API URL
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{folder}/{filename}"
+    
+    # Check if file exists
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    # Get current file SHA if exists (for update)
+    sha = None
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        sha = response.json()['sha']
+    
+    # Prepare data
+    data = {
+        "message": f"Upload {filename}",
+        "content": content_base64,
+        "branch": GITHUB_BRANCH
+    }
+    
+    if sha:
+        data["sha"] = sha
+    
+    # Upload file
+    response = requests.put(url, headers=headers, json=data)
+    
+    if response.status_code in [200, 201]:
+        return response.json()['content']['download_url']
+    else:
+        return None
+
+def get_from_github(filename, folder="images"):
+    """Get file from GitHub"""
+    import requests
+    
+    if not GITHUB_TOKEN:
+        return None
+        
+    # Direct raw URL
+    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/{folder}/{filename}"
+    
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.content
+        return None
+    except:
+        return None
 # Simple credentials loading
 def load_api_keys():
     """Load API keys from environment variables only"""
@@ -292,18 +356,14 @@ def enhanced_chunk_docx(file_content, chunk_size=800):
                     if image_extension == 'jpeg':
                         image_extension = 'jpg'
                     elif image_extension not in ['jpg', 'png', 'gif', 'bmp', 'webp']:
-                        image_extension = 'png'  # Default fallback
+                        image_extension = 'png'
                         
                     image_filename = f"image_{image_counter}.{image_extension}"
-                    image_path = os.path.join(st.session_state.temp_image_dir, image_filename)
-                    
-                    image_data = image_part.blob
-                      st.session_state.stored_images[image_filename] = image_data
-                      image_path = image_filename  # Just use filename as reference
+                    image_url = upload_to_github(image_filename, image_part.blob)
                     
                     images.append({
                         'filename': image_filename,
-                        'path': image_path,
+                        'url': image_url,  # Store URL instead of path
                         'label': label,
                         'number': image_counter,
                         'position': items[i]['position']
@@ -1009,8 +1069,12 @@ with tab2:
                                 img = img_data['img']
                                 try:
                                     from PIL import Image
-                                    if os.path.exists(img['path']):
-                                        image = Image.open(img['path'])
+                                    image_data = get_from_github(img['filename'])
+                                    if image_data:
+                                        import io
+                                        from PIL import Image
+                                        image = Image.open(io.BytesIO(image_data))
+                                        st.image(image, caption=img['label'], use_container_width=True)
                                         st.image(image, caption=img['label'], use_container_width=True)
                                 except Exception as e:
                                     st.error(f"Cannot display {img['filename']}: {e}")
@@ -1022,8 +1086,12 @@ with tab2:
                                     with cols[idx]:
                                         try:
                                             from PIL import Image
-                                            if os.path.exists(img['path']):
-                                                image = Image.open(img['path'])
+                                            image_data = get_from_github(img['filename'])
+                                            if image_data:
+                                                import io
+                                                from PIL import Image
+                                                image = Image.open(io.BytesIO(image_data))
+                                                st.image(image, caption=img['label'], use_container_width=True)
                                                 st.image(image, caption=img['label'], use_container_width=True)
                                         except Exception as e:
                                             st.error(f"Cannot display {img['filename']}: {e}")

@@ -3,3 +3,5 @@ python-docx
 openai
 requests
 pillow
+faiss-cpu
+sentence-transformers

@@ -8,6 +8,7 @@ import traceback
 from dataclasses import dataclass
 from typing import List, Dict, Any
 import io
+import numpy as np
 
 # Set page config
 st.set_page_config(
@@ -20,7 +21,7 @@ st.set_page_config(
 # Configuration
 GITHUB_REPO = os.getenv('GITHUB_REPO', 'FadeevMax/last_try')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '')
-GITHUB_BRANCH = 'image-storage'
+GITHUB_BRANCH = 'main'
 
 @dataclass
 class TextElement:
@@ -251,7 +252,94 @@ class SimpleDocumentProcessor:
         # Default label
         return f"Image {image_number}"
 
-class SimpleChatbot:
+class VectorSearch:
+    def __init__(self):
+        self.embeddings = None
+        self.index = None
+        self.blocks = []
+        self.model = None
+        self._initialize_model()
+    
+    def _initialize_model(self):
+        """Initialize sentence transformer model"""
+        try:
+            from sentence_transformers import SentenceTransformer
+            # Use a lightweight model that works well for semantic search
+            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+            st.success("✅ Vector search model loaded")
+        except ImportError:
+            st.error("❌ Please install sentence-transformers: pip install sentence-transformers")
+            self.model = None
+        except Exception as e:
+            st.error(f"❌ Error loading model: {e}")
+            self.model = None
+    
+    def build_index(self, blocks: List[DocumentBlock]):
+        """Build FAISS index from document blocks"""
+        if not self.model:
+            return False
+            
+        try:
+            import faiss
+            
+            # Extract text for embedding
+            texts = []
+            self.blocks = blocks
+            
+            for block in blocks:
+                # Combine tab, title, and content for better context
+                search_text = f"{block.tab_title} {block.block_title} {block.full_text}"
+                texts.append(search_text)
+            
+            # Generate embeddings
+            st.info("🔄 Generating embeddings...")
+            self.embeddings = self.model.encode(texts, show_progress_bar=True)
+            
+            # Create FAISS index
+            dimension = self.embeddings.shape[1]
+            self.index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
+            
+            # Normalize embeddings for cosine similarity
+            faiss.normalize_L2(self.embeddings)
+            self.index.add(self.embeddings.astype('float32'))
+            
+            st.success(f"✅ Vector index built with {len(blocks)} blocks")
+            return True
+            
+        except ImportError:
+            st.error("❌ Please install faiss-cpu: pip install faiss-cpu")
+            return False
+        except Exception as e:
+            st.error(f"❌ Error building index: {e}")
+            return False
+    
+    def search(self, query: str, top_k: int = 3) -> List[DocumentBlock]:
+        """Search for relevant blocks using vector similarity"""
+        if not self.model or not self.index:
+            return []
+        
+        try:
+            # Encode query
+            query_embedding = self.model.encode([query])
+            
+            # Normalize for cosine similarity
+            import faiss
+            faiss.normalize_L2(query_embedding)
+            
+            # Search
+            scores, indices = self.index.search(query_embedding.astype('float32'), top_k)
+            
+            # Return relevant blocks
+            results = []
+            for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
+                if idx < len(self.blocks) and score > 0.3:  # Minimum similarity threshold
+                    results.append(self.blocks[idx])
+            
+            return results
+            
+        except Exception as e:
+            st.error(f"❌ Error during search: {e}")
+            return []
     def __init__(self):
         self.openai_key = ""
         self.gemini_key = ""
@@ -260,8 +348,39 @@ class SimpleChatbot:
         self.openai_key = openai_key
         self.gemini_key = gemini_key
     
+class SimpleChatbot:
+    def __init__(self):
+        self.openai_key = ""
+        self.gemini_key = ""
+        self.vector_search = VectorSearch()
+        self.fallback_search_enabled = True
+    
+    def setup_keys(self, openai_key: str, gemini_key: str):
+        self.openai_key = openai_key
+        self.gemini_key = gemini_key
+    
+    def build_search_index(self, blocks: List[DocumentBlock]) -> bool:
+        """Build vector search index"""
+        return self.vector_search.build_index(blocks)
+    
     def search_blocks(self, blocks: List[DocumentBlock], query: str, top_k: int = 3) -> List[DocumentBlock]:
-        """Simple keyword-based search"""
+        """Search using vector similarity with keyword fallback"""
+        # Try vector search first
+        vector_results = self.vector_search.search(query, top_k)
+        
+        if vector_results:
+            st.info(f"🔍 Found {len(vector_results)} results using semantic search")
+            return vector_results
+        
+        # Fallback to keyword search if vector search fails or returns no results
+        if self.fallback_search_enabled:
+            st.info("🔍 Using keyword search fallback")
+            return self._keyword_search(blocks, query, top_k)
+        
+        return []
+    
+    def _keyword_search(self, blocks: List[DocumentBlock], query: str, top_k: int = 3) -> List[DocumentBlock]:
+        """Fallback keyword-based search"""
         query_words = set(query.lower().split())
         scored_blocks = []
         
@@ -425,6 +544,8 @@ if 'processor' not in st.session_state:
     st.session_state.processor = SimpleDocumentProcessor()
 if 'chatbot' not in st.session_state:
     st.session_state.chatbot = SimpleChatbot()
+if 'vector_index_ready' not in st.session_state:
+    st.session_state.vector_index_ready = False
 
 # CSS
 st.markdown("""
@@ -473,8 +594,19 @@ with st.sidebar:
     
     if st.session_state.blocks:
         st.success(f"✅ Document loaded ({len(st.session_state.blocks)} blocks)")
+        if st.session_state.vector_index_ready:
+            st.success("✅ Vector search ready")
+        else:
+            st.warning("⏳ Building vector index...")
     else:
         st.warning("⏳ No document loaded")
+    
+    # Search method selection
+    st.header("🔍 Search Settings")
+    use_vector_search = st.checkbox("Use Vector Search", value=True, 
+                                   help="Semantic search using FAISS (better understanding)")
+    fallback_enabled = st.checkbox("Enable Keyword Fallback", value=True,
+                                  help="Fall back to keyword search if vector search fails")
 
 # Main interface
 col1, col2 = st.columns([6, 1])
@@ -491,6 +623,13 @@ with col2:
                 if blocks:
                     st.session_state.blocks = blocks
                     st.success(f"✅ Loaded {len(blocks)} blocks!")
+                    
+                    # Build vector index
+                    with st.spinner("Building search index..."):
+                        if st.session_state.chatbot.build_search_index(blocks):
+                            st.session_state.vector_index_ready = True
+                        else:
+                            st.warning("⚠️ Vector search not available, will use keyword search")
                 else:
                     st.error("❌ Failed to process document")
             else:
@@ -505,11 +644,19 @@ if uploaded_file:
         if blocks:
             st.session_state.blocks = blocks
             st.success(f"✅ Processed {len(blocks)} blocks!")
+            
+            # Build vector index
+            with st.spinner("Building search index..."):
+                if st.session_state.chatbot.build_search_index(blocks):
+                    st.session_state.vector_index_ready = True
+                else:
+                    st.warning("⚠️ Vector search not available, will use keyword search")
 
 # Chat interface
 if st.session_state.blocks:
-    # Setup API keys
+    # Setup API keys and search preferences
     st.session_state.chatbot.setup_keys(openai_key, gemini_key)
+    st.session_state.chatbot.fallback_search_enabled = fallback_enabled
     
     # Display chat history
     for message in st.session_state.messages:
@@ -571,12 +718,24 @@ if st.session_state.blocks:
 
 else:
     st.info("👆 Please load a document first by clicking 'Load SOP' or uploading a file.")
+    
+    # Show installation instructions
+    with st.expander("📦 Required Dependencies"):
+        st.markdown("""
+        To use vector search, install these packages:
+        ```bash
+        pip install sentence-transformers faiss-cpu
+        ```
+        
+        **sentence-transformers**: For generating text embeddings
+        **faiss-cpu**: For fast similarity search
+        """)
 
 # Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; margin-top: 2rem;'>
-    <p>🚀 GTI SOP Chatbot - Simple Version</p>
-    <p>Preserves original document structure and formatting</p>
+    <p>🚀 GTI SOP Chatbot - With FAISS Vector Search</p>
+    <p>Semantic search with keyword fallback • Preserves document formatting</p>
 </div>
 """, unsafe_allow_html=True)
